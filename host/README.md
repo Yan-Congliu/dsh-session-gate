@@ -14,6 +14,7 @@
   可关）；`local` 预设默认挂上这两个工具；面板「已省」带百分比。
 - 0.3.4：不再在 `cordis.patch.yml` 里写死本机路径 —— 状态目录默认 `$DSH_HOME/session-gate`，日志默认
   同目录 `gate.log`。仓库拿到别的机器上直接能装。
+- 0.3.5：包名从 `@local/dsh-session-gate` 改为 `dsh-session-gate`（去掉私有域，公开分发更直观）。
 
 ## 装在哪、怎么装
 
@@ -26,7 +27,7 @@ plugin_manager action=install_bundle target=<本仓库路径>\host
 Windows 上路径形如 `D:\code\dsh-session-gate\host`；用反斜杠、不要加引号。装进当前 profile 后所有会话都会多出 `gate_status` / `gate_switch` / `gate_plan` 三个工具（合计约 0.94 KB ≈ 236 token）。
 
 装完不需要重启；改完磁盘上的代码要重载：`plugin_manager action=set_plugin target=include:session-gate`
-（先 `enabled:false` 再 `enabled:true`），整包重读则用 `set_bundle target=@local/dsh-session-gate`。
+（先 `enabled:false` 再 `enabled:true`），整包重读则用 `set_bundle target=dsh-session-gate`。
 
 ## 面板在哪
 

@@ -1,6 +1,6 @@
 - insert:
     - id: session-gate
-      name: '@local/dsh-session-gate'
+      name: 'dsh-session-gate'
     - id: preset-local
       name: '@deepseek-ai/dsh-agent-preset'
       config:

@@ -1,11 +1,11 @@
 window.__ModuleLoader__.load({
-  id: '@local/dsh-session-gate',
+  id: 'dsh-session-gate',
   factory(require) {
     const React = require('react')
     const h = React.createElement
     const { useCallback, useEffect, useMemo, useRef, useState } = React
 
-    const PKG = '@local/dsh-session-gate'
+    const PKG = 'dsh-session-gate'
     const KIND = 'session-gate:panel'
     const API = '/session-gate/api'
 
