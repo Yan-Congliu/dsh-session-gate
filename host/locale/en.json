@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session Gate",
+    "description": "Show or hide groups of tools per session so unused tool manuals stop consuming the context window, especially on small local models."
+  }
+}

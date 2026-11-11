@@ -1,0 +1,30 @@
+{
+  "name": "@local/dsh-session-gate",
+  "version": "0.3.4",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Session gate: show or hide groups of tools per session, so small local models do not spend their context on tool manuals they do not use.",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+pnpm-lock.yaml
+
+# local runtime / debugging output
+*.log
+ui-shot*.png
+stage0-probe/
+
+# OS noise
+Thumbs.db
+.DS_Store
