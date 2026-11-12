@@ -23,20 +23,45 @@
 
 ## 快速开始
 
-1. 在 DSH 里安装（把路径换成你 clone 下来的 `host` 目录）：
+先确认你的 DSH 里**有没有** `plugin_manager` 这个工具（问一句“列出插件”就行）。
 
-   ```
-   plugin_manager install_bundle target=<本仓库路径>\host
-   ```
+### 情况 A：有 `plugin_manager`（部分版本自带）
 
-2. 重载插件（改过代码时也一样）：
+```
+plugin_manager install_bundle target=<你 clone 下来的仓库路径>\host
+```
 
-   ```
-   plugin_manager set_bundle target=dsh-session-gate
-   ```
+改过代码后重载：
 
-3. 打开右侧栏 → **会话闸门** 页签，点配方或逐组开关。
-4. 想要本地小模型模式：新建会话时在预设里选 **本地模式**。
+```
+plugin_manager set_bundle target=dsh-session-gate
+```
+
+### 情况 B：没有 `plugin_manager`（多数桌面版）
+
+仓库根带了一个不依赖任何插件工具的安装器，**默认只打印计划，不动手**：
+
+```
+node install.mjs            # 先看它会做什么（dry run）
+node install.mjs --apply    # 真正安装：拷入 ~/.dsh/plugins 与 profile，并登记 bundle
+```
+
+它会：① 把 `host/` 拷到 `<DSH_HOME>/plugins/dsh-session-gate`；② 再拷到 `<profile>/node_modules/dsh-session-gate`；③ 备份并修改 `<profile>/package.json`（`dependencies` 加 `file:`、`dsh.profile.bundles` 追加一项）。
+
+- 加了 `--apply` 才会写；写 `~/.dsh` 时 Windows 可能弹权限框，允许即可。
+- 换 profile：`--profile desktop`；换 DSH_HOME：`--home D:\xxx`。
+- 后悔了：`node install.mjs --rollback --apply`（恢复最近的 `package.json` 备份并删掉两份拷贝）。
+- 装完**重启 DSH**。
+
+### 情况 C：完全手动
+
+等价于上面三步：把 `host/` 拷两份，然后在 profile 的 `package.json` 里加依赖与 `dsh.profile.bundles` 条目。逐字步骤见 [`host/README.md`](host/README.md#手工安装没有-plugin_manager-时)。
+
+### 然后
+
+1. 打开右侧栏 → **会话闸门** 页签，点配方或逐组开关。
+2. 想要本地小模型模式：新建会话时在预设里选 **本地模式**。
+3. 面板没拿到会话 id 时不再空白：它会列出正在运行的会话让你点一个接上（读操作才能兜底；开关和锁必须明确是哪个会话）。
 
 ## 工具用法示例
 
@@ -63,14 +88,16 @@ gate_plan {"task": "帮我用 Word 写一份机械课设报告，最后排版导
 ## 目录结构
 
 ```
+install.mjs          安装器（无 plugin_manager 时用；默认 dry run）
 host/                插件本体（Host 端 index.js + 浏览器端 client.js + cordis.patch.yml）
 ├─ cordis.patch.yml  挂载：插件行 + local 预设行
 ├─ index.js          gate_status / gate_switch / gate_plan、分组、锁、HTTP API
 ├─ client.js         右侧栏面板
 ├─ locale/           中英文展示名与描述
-└─ README.md         插件详细文档（配置项、权限模型、状态文件格式）
-tests/               smoke.mjs（全流程）+ recovery.mjs（跨重启 11 项断言）
+└─ README.md         插件详细文档（配置项、权限模型、状态文件格式、手工安装）
+tests/               smoke.mjs（全流程）+ recovery.mjs（跨重启 11 项断言）+ api.mjs（HTTP 契约）
 docs/                截图
+reports/             外部反馈与核查
 stage0~3-report.md   分阶段开发与实测报告（含数字与踩坑）
 ```
 

@@ -55,6 +55,11 @@ window.__ModuleLoader__.load({
   border:1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent); border-radius:8px; padding:6px 8px; }
 .dsg-note { font-size:11px; color:var(--dsw-alias-label-secondary); line-height:1.7; }
 .dsg-empty { color:var(--dsw-alias-label-secondary); opacity:.7; font-size:11px; padding:12px 0; }
+.dsg-picks { display:flex; flex-direction:column; gap:6px; }
+.dsg-pick { text-align:left; border:1px solid var(--dsw-alias-border-l1); background:transparent; color:var(--dsw-alias-label-primary);
+  font-size:11px; border-radius:8px; padding:6px 8px; cursor:pointer; transition:background .18s ease; }
+.dsg-pick:hover { background:var(--dsw-alias-bg-layer-2); }
+.dsg-pick small { display:block; margin-top:2px; color:var(--dsw-alias-state-idle-primary); font-weight:400; }
 `
 
     const fmtBytes = (bytes) => {
@@ -141,11 +146,15 @@ window.__ModuleLoader__.load({
       const sessionId = props.sessionId
       const info = typeof props.useTabInfo === 'function' ? props.useTabInfo() : undefined
       const visible = info?.tab?.visible !== false
+      const [chosen, setChosen] = useState('')
+      const [picks, setPicks] = useState(null)
       const [state, setState] = useState(null)
       const [error, setError] = useState(null)
       const [busy, setBusy] = useState(false)
       const [note, setNote] = useState('')
       const alive = useRef(true)
+      const given = typeof sessionId === 'string' && sessionId !== ''
+      const activeSession = given ? sessionId : chosen
       useEffect(() => {
         alive.current = true
         return () => {
@@ -153,27 +162,48 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
+      // No session id from the tab: ask the Host which sessions are actually
+      // running and let the person pick one, instead of rendering an empty box
+      // that looks exactly like a broken plugin.
+      const loadCandidates = useCallback(async (quiet) => {
+        try {
+          const response = await fetch(`${API}/sessions`, { headers: { accept: 'application/json' } })
+          const body = await response.json()
+          if (!alive.current) return
+          const rows = Array.isArray(body?.sessions) ? body.sessions : []
+          setPicks(rows)
+          setError(rows.length === 0 ? '现在没有运行中的会话；先打开或切回一个会话，闸门才有东西可管。' : null)
+        } catch (cause) {
+          if (alive.current && quiet !== true) setError(`连不上闸门服务：${String(cause?.message ?? cause)}`)
+        }
+      }, [])
+
       const load = useCallback(
         async (quiet) => {
-          if (typeof sessionId !== 'string' || sessionId === '') return
+          if (typeof activeSession !== 'string' || activeSession === '') {
+            await loadCandidates(quiet)
+            return
+          }
           try {
-            const response = await fetch(`${API}/state?session=${encodeURIComponent(sessionId)}`, {
+            const response = await fetch(`${API}/state?session=${encodeURIComponent(activeSession)}`, {
               headers: { accept: 'application/json' },
             })
             const body = await response.json()
             if (!alive.current) return
             if (body?.ok === false) {
               setError(body.error ?? '读取失败')
-              if (body.groups) setState(body)
+              setState(body.groups ? body : null)
+              if (Array.isArray(body.sessions)) setPicks(body.sessions)
             } else {
               setError(null)
               setState(body)
+              setPicks(null)
             }
           } catch (cause) {
             if (alive.current && quiet !== true) setError(`连不上闸门服务：${String(cause?.message ?? cause)}`)
           }
         },
-        [sessionId],
+        [activeSession, loadCandidates],
       )
 
       useEffect(() => {
@@ -222,24 +252,31 @@ window.__ModuleLoader__.load({
       const onSwitch = useCallback(
         (group) => {
           void run(() =>
-            post('switch', { session: sessionId, groups: { [group.id]: group.on !== true } }),
+            post('switch', { session: activeSession, groups: { [group.id]: group.on !== true } }),
           )
         },
-        [run, sessionId],
+        [run, activeSession],
       )
       const onLock = useCallback(
         (group) => {
           const state = group.lock === 'on' || group.lock === 'off' ? null : group.on ? 'on' : 'off'
-          void run(() => post('lock', { session: sessionId, group: group.id, state }))
+          void run(() => post('lock', { session: activeSession, group: group.id, state }))
         },
-        [run, sessionId],
+        [run, activeSession],
       )
       const onRecipe = useCallback(
         (recipe) => {
-          void run(() => post('switch', { session: sessionId, recipe: recipe.id }))
+          void run(() => post('switch', { session: activeSession, recipe: recipe.id }))
         },
-        [run, sessionId],
+        [run, activeSession],
       )
+      const onPick = useCallback((id) => {
+        if (typeof id !== 'string' || id === '') return
+        setChosen(id)
+        setPicks(null)
+        setState(null)
+        setError(null)
+      }, [])
 
       const ordered = useMemo(() => {
         const groups = Array.isArray(state?.groups) ? state.groups.slice() : []
@@ -251,14 +288,61 @@ window.__ModuleLoader__.load({
         })
       }, [state])
 
-      const rawSession = String(state?.sessionId ?? sessionId ?? '')
+      const rawSession = String(state?.sessionId ?? activeSession ?? '')
       const shortSession =
         rawSession.startsWith('session-') && rawSession.length > 16
           ? rawSession.slice(8, 16)
           : rawSession.slice(0, 8)
 
-      if (typeof sessionId !== 'string' || sessionId === '') {
-        return h('div', { className: 'dsg-root' }, h('div', { className: 'dsg-empty' }, '请先打开一个会话'))
+      if (typeof activeSession !== 'string' || activeSession === '') {
+        const rows = Array.isArray(picks) ? picks : []
+        return h(
+          'div',
+          { className: 'dsg-root' },
+          h(
+            'div',
+            { className: 'dsg-head' },
+            h('span', { className: 'dsg-title' }, '会话闸门'),
+            h('span', { className: 'dsg-stat' }, '未接上会话'),
+          ),
+          error ? h('div', { className: 'dsg-error' }, error) : null,
+          rows.length > 0 ? h('div', { className: 'dsg-section' }, '接上哪个会话？') : null,
+          rows.length > 0
+            ? h(
+                'div',
+                { className: 'dsg-picks' },
+                rows.map((row) =>
+                  h(
+                    'button',
+                    {
+                      key: String(row.id),
+                      className: 'dsg-pick',
+                      title: String(row.id),
+                      onClick: () => onPick(row.id),
+                    },
+                    row.title || String(row.id).replace(/^session-/, ''),
+                    h(
+                      'small',
+                      null,
+                      `${String(row.id).replace(/^session-/, '').slice(0, 8)} · 工具说明 ${fmtBytes(row.visibleBytes)}`,
+                    ),
+                  ),
+                ),
+              )
+            : picks === null
+              ? h('div', { className: 'dsg-empty' }, '读取中…')
+              : null,
+          h(
+            'div',
+            { className: 'dsg-hint' },
+            '面板没拿到会话 id 时不会自己乱猜；点上面的会话接上，或者在左侧切到那个会话再打开这里。',
+          ),
+          h(
+            'button',
+            { className: 'dsg-pick', disabled: busy, onClick: () => void loadCandidates(false) },
+            '重新查找',
+          ),
+        )
       }
 
       return h(
@@ -273,9 +357,9 @@ window.__ModuleLoader__.load({
                 'span',
                 {
                   className: 'dsg-stat',
-                  title: `会话 ${String(state.sessionId ?? sessionId)}｜开关和锁只对这个会话生效`,
+                  title: `会话 ${String(state.sessionId ?? activeSession)}｜开关和锁只对这个会话生效`,
                 },
-                `工具说明 ${fmtBytes(state.visibleBytes)} ≈ ${fmtTokens(state.estimateTokens)} token · 本会话 ${shortSession}`,
+                `工具说明 ${fmtBytes(state.visibleBytes)} ≈ ${fmtTokens(state.estimateTokens)} token · ${given ? '本会话' : '接上的会话'} ${shortSession}${state.fallback ? '（唯一在跑的会话）' : ''}`,
               )
             : h('span', { className: 'dsg-stat' }, '读取中…'),
           state && state.savedTokens > 0
@@ -380,7 +464,14 @@ window.__ModuleLoader__.load({
         }, 'session-gate: styles')
         const tabs = ctx.get('sidebarRightTabs', false)
         const slots = ctx.get('slots', false)
-        if (tabs === undefined || tabs === null || slots === undefined || slots === null) return
+        if (tabs === undefined || tabs === null || slots === undefined || slots === null) {
+          // Silence here used to look exactly like a broken install: say why the
+          // tab never appeared, so a support report can include it.
+          console.warn(
+            `[${PKG}] 右侧栏服务没就绪（sidebarRightTabs=${Boolean(tabs)}, slots=${Boolean(slots)}），这次没有注册面板；刷新页面后仍然这样，请检查 DSH 版本。`,
+          )
+          return
+        }
         ctx.effect(
           () =>
             tabs.register({

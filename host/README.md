@@ -29,6 +29,28 @@ Windows 上路径形如 `D:\code\dsh-session-gate\host`；用反斜杠、不要�
 装完不需要重启；改完磁盘上的代码要重载：`plugin_manager action=set_plugin target=include:session-gate`
 （先 `enabled:false` 再 `enabled:true`），整包重读则用 `set_bundle target=dsh-session-gate`。
 
+### 手工安装（没有 `plugin_manager` 时）
+
+有些桌面版不带 `plugin_manager` 工具，插件中心也只收 npm 包名。这时用仓库根的安装器：
+
+```
+node install.mjs            # dry run：只打印会改什么
+node install.mjs --apply    # 真正写入
+```
+
+它做的事与下面手工步骤完全相同；想自己来就照着走（`<profile>` 一般是 `desktop`）：
+
+1. 找到 DSH_HOME：默认 `C:\Users\<你的用户名>\.dsh`，设了环境变量 `DSH_HOME` 就用它。
+2. 把本 `host/` 整个目录拷到 `<DSH_HOME>\plugins\dsh-session-gate`（没有 `plugins` 就新建）。
+3. 再把 `host/` 拷到 `<DSH_HOME>\profiles\<profile>\node_modules\dsh-session-gate`（已有旧的就先删）。
+4. 备份 `<DSH_HOME>\profiles\<profile>\package.json`。
+5. 编辑它：`dependencies` 里加 `"dsh-session-gate": "file:<本仓库绝对路径>/host"`，
+   `dsh.profile.bundles` 数组里追加 `"dsh-session-gate"`。
+6. 重启 DSH。
+7. 撤销：恢复第 4 步的备份，删掉第 2、3 步的两个目录，再重启。
+
+装了之后可以用 `gate_status` 核对：0.3.6 起它会带 `stateDir` 与 `bundleVersion`，报 issue 时一并贴出来最快。
+
 ## 面板在哪
 
 右侧栏 →「会话闸门」页签（需要先把右侧栏打开）。面板内容：
@@ -45,8 +67,14 @@ Windows 上路径形如 `D:\code\dsh-session-gate\host`；用反斜杠、不要�
 
 ![本地模式 4b](../docs/local-mode-4b-2026-11-10.jpg)
 
-面板通过回环地址的 `/session-gate/api`（`state` / `switch` / `lock` / `plan`）和 Host 说话，
+面板通过回环地址的 `/session-gate/api`（`state` / `switch` / `lock` / `plan` / `sessions`）和 Host 说话，
 和 `gate_switch` 工具走同一个 `applySwitch`，规则只实现一遍。
+
+- `GET state?session=<id>` 也可以写 `?sessionId=<id>`（只当输入别名，返回字段仍叫 `sessionId`）。
+- 不带 session、且**只有一个**会话在跑时，`state` 会用它并在响应里标 `fallback: true`；
+  多个会话同时跑则回 `offline` + `sessions[]` 让你挑，不会自己乱猜。
+- `switch` / `lock` / `plan` 这类写操作**从不兜底**：缺 session 或会话不在跑就报错 + 给候选列表，
+  因为面板可能挂在一个休眠会话上，而此刻唯一活着的是另一个会话。
 
 ## 三层权限（下低上高）
 
@@ -119,14 +147,27 @@ tool-result-pruner）。不挂联网、办公、SolidWorks、子代理、技能�
   重启应用或再重载一次即恢复。
 - 隐藏后在执行层也会被拒（`tools.restrict` 同时管 schema、查找和执行），不是"藏起来骗模型"。
 - 面板只对**正在运行**的会话生效；休眠会话切过去再操作。
+- 面板拿不到 `props.sessionId` 时（0.3.6 起）不再空白：会列出正在跑的会话让人点一个接上；
+  接上的是哪个会话，顶部会写「接上的会话 xxxx」。
 - Host 重启后第一次读状态，已省字节可能先显示 0（尺寸缓存是进程内的），开关一次即恢复。
 - 冷启动时插件可能比 web 服务先加载（0.3.2 前会记 `webServer unavailable` 并永久禁用面板 API，
   面板报「连不上闸门服务」）。0.3.2 起改用 `ctx.inject(['webServer'], …)` 等它就绪再注册。
 
+## 版本历史
+
+- 0.3.6 手工安装器 `install.mjs` + README 手工步骤；`/state` 支持 `sessionId` 别名与单活会话只读兜底；
+  `/sessions` 与 `state` 带 `version`；`gate_status` 带 `stateDir` / `bundleVersion`；
+  面板无会话时列候选；client 拿不到槽位打 `console.warn`；新增 `tests/api.mjs`。
+- 0.3.5 包名去私有域（`@local/` → `dsh-session-gate`）。
+- 0.3.3 待办/提问独立成组 `assist`，`local` 预设挂 `tool-todo` / `tool-ask-user`，面板显示已省百分比。
+- 0.3.2 冷启动用 `ctx.inject(['webServer'], …)` 等网页服务，修复面板 API 不注册。
+
 ## 自测
 
 ```
-node tests\smoke.mjs
+node tests\smoke.mjs      # 工具开关全流程
+node tests\recovery.mjs   # 跨重启恢复（11 项断言）
+node tests\api.mjs        # HTTP API 契约（别名、兜底、写操作拒绝、版本）
 ```
 
 假 tools 服务上跑完整流程：初始全开 → 隐藏 ego/web → 校验 deny 与持久化 → 人工锁挡 agent →
@@ -145,6 +186,8 @@ host/
   README.md           本文件
 tests/smoke.mjs       离线自测
 tests/recovery.mjs    跨进程重启恢复测试
+tests/api.mjs         HTTP API 契约测试（假 webServer）
+install.mjs           无 plugin_manager 时的安装器（仓库根，默认 dry run）
 docs/                 面板与实测截图（README 引用）
 stage0~3-report.md    阶段报告（开发记录）
 LICENSE               MIT

@@ -780,9 +780,53 @@ export function apply(ctx, config = {}) {
     response.end(`${JSON.stringify(value)}\n`)
   }
 
+  // The bundle version, read once from our own package.json. Issues are much
+  // easier to place when the reporter can paste it with gate_status output.
+  let bundleVersionCache
+  const bundleVersion = async () => {
+    if (bundleVersionCache !== undefined) return bundleVersionCache
+    try {
+      const own = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'))
+      bundleVersionCache = typeof own?.version === 'string' ? own.version : 'unknown'
+    } catch {
+      bundleVersionCache = 'unknown'
+    }
+    return bundleVersionCache
+  }
+
+  // Live sessions, with what each currently reports. Used by `/sessions` and by
+  // the "which session do you mean?" lists the panel shows instead of dying.
+  const liveRows = async (agents) => {
+    const rows = []
+    for (const agent of agents?.list?.() ?? []) {
+      try {
+        const plan = await planFor(agent)
+        rows.push({
+          id: agent.session?.id ?? null,
+          title: agent.session?.title ?? null,
+          preset: agent.presetId ?? agent.preset?.id ?? null,
+          visibleBytes: plan.visibleBytes,
+          savedBytes: plan.savedBytes,
+        })
+      } catch (error) {
+        rows.push({ id: agent.session?.id ?? null, error: String(error?.message ?? error) })
+      }
+    }
+    return rows
+  }
+
   // The panel talks to the Host through this loopback-only API. Every mutation
   // goes through applySwitch/setLock — the same code the agent tools call — so a
   // rule is implemented exactly once.
+  //
+  // Reads may be relaxed, writes may not:
+  //   GET /state   no session + exactly one live session → answer for that one and
+  //                say `fallback: true`, so a panel that never got a session id
+  //                still works instead of showing an empty box.
+  //   GET /state   otherwise → `offline` plus the live `sessions[]` to pick from.
+  //   POST ...     always needs an explicit `session`: the panel can be mounted on
+  //                a dormant session while another one is the only live agent, and
+  //                a silent fallback would then change the wrong conversation.
   const gateApi = async (request, response) => {
     const remote = request.socket?.remoteAddress ?? ''
     const loopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1'
@@ -798,37 +842,54 @@ export function apply(ctx, config = {}) {
     try {
       if (method === 'sessions' && request.method === 'GET') {
         // Diagnostic: which live agents the gate can see, and what each reports.
-        const rows = []
-        for (const agent of agents?.list?.() ?? []) {
-          try {
-            const plan = await planFor(agent)
-            rows.push({
-              id: agent.session?.id ?? null,
-              title: agent.session?.title ?? null,
-              preset: agent.presetId ?? agent.preset?.id ?? null,
-              visibleBytes: plan.visibleBytes,
-              savedBytes: plan.savedBytes,
-            })
-          } catch (error) {
-            rows.push({ id: agent.session?.id ?? null, error: String(error?.message ?? error) })
-          }
-        }
-        replyJson(response, 200, { ok: true, sessions: rows })
+        const rows = await liveRows(agents)
+        replyJson(response, 200, { ok: true, version: await bundleVersion(), sessions: rows })
         return
       }
       if (method === 'state' && request.method === 'GET') {
-        const sessionId = url.searchParams.get('session') ?? ''
-        const agent = agents?.get?.(sessionId)
+        // `sessionId` is accepted as an input alias only; the response always
+        // carries `sessionId`, so a caller never has to know which name it sent.
+        const requested = url.searchParams.get('session') ?? url.searchParams.get('sessionId') ?? ''
+        let sessionId = requested
+        let fallback = false
+        let agent = sessionId === '' ? undefined : agents?.get?.(sessionId)
         if (agent === undefined) {
-          replyJson(response, 200, {
-            ok: false,
-            offline: true,
-            error: '这个会话当前不在运行；先切回该会话，闸门才能改它的工具。',
-          })
-          return
+          const rows = await liveRows(agents)
+          if (sessionId === '' && rows.length === 1 && rows[0].id !== null) {
+            agent = agents?.get?.(rows[0].id)
+            if (agent !== undefined) {
+              sessionId = rows[0].id
+              fallback = true
+            }
+          }
+          if (agent === undefined) {
+            const error =
+              rows.length === 0
+                ? '现在没有运行中的会话；先打开或切回一个会话，闸门才有东西可管。'
+                : sessionId === ''
+                  ? `面板没拿到会话 id，而现在有 ${rows.length} 个会话在运行；从下面挑一个接上。`
+                  : '这个会话当前不在运行；先切回该会话，闸门才能改它的工具。'
+            replyJson(response, 200, {
+              ok: false,
+              offline: true,
+              error,
+              requestedSession: sessionId === '' ? null : sessionId,
+              sessions: rows,
+              version: await bundleVersion(),
+              hint: 'GET /session-gate/api/state?session=<id>',
+            })
+            return
+          }
         }
         const plan = await planFor(agent)
-        replyJson(response, 200, { ...describe(plan), recipes: RECIPES, live: true })
+        replyJson(response, 200, {
+          ...describe(plan),
+          recipes: RECIPES,
+          live: true,
+          fallback,
+          requestedSession: requested === '' ? null : requested,
+          version: await bundleVersion(),
+        })
         return
       }
       if (request.method !== 'POST') {
@@ -854,6 +915,7 @@ export function apply(ctx, config = {}) {
             ok: false,
             offline: true,
             error: '这个会话当前不在运行；先切回该会话。',
+            sessions: await liveRows(agents),
           })
           return
         }
@@ -868,6 +930,7 @@ export function apply(ctx, config = {}) {
             ok: false,
             offline: true,
             error: '这个会话当前不在运行；先切回该会话。',
+            sessions: await liveRows(agents),
           })
           return
         }
@@ -928,6 +991,8 @@ export function apply(ctx, config = {}) {
       return serialize(async () => {
         const plan = await refresh(agent)
         const body = describe(plan)
+        body.stateDir = stateDir
+        body.bundleVersion = await bundleVersion()
         log(
           `status session=${plan.sessionId ?? '?'} visible=${plan.visibleBytes}B saved=${plan.savedBytes}B denied=${plan.deny.length}`,
         )
