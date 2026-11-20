@@ -23,6 +23,36 @@ export const inject = ['tools']
 
 const GATE_TOOL_NAMES = new Set(['gate_status', 'gate_switch', 'gate_plan'])
 
+/** Friendly names for tool families this build has never heard of. */
+const FAMILY_NAMES = {
+  acad: 'AutoCAD',
+  autocad: 'AutoCAD',
+  bili: '哔哩哔哩',
+  deepseek: 'DeepSeek 工具',
+  gitee: 'Gitee',
+  github: 'GitHub',
+  npm: 'npm',
+  qq: 'QQ',
+  remote: '远程会话',
+  user: '我的终端',
+  wechat: '微信',
+  wecom: '企业微信',
+  pet: '桌宠',
+  whale: '鲸鱼挂件',
+}
+
+// "acad_command" -> "acad"; a name without an underscore has no family.
+function familyOf(toolName) {
+  const match = /^([a-z][a-z0-9]*)_/.exec(toolName)
+  return match === null ? undefined : match[1]
+}
+
+function familyTitle(family) {
+  const known = FAMILY_NAMES[family]
+  if (known !== undefined) return known
+  return family.charAt(0).toUpperCase() + family.slice(1)
+}
+
 /** Tool groups, matched by exact name first, then by the longest prefix. */
 const DEFAULT_GROUPS = [
   {
@@ -505,16 +535,86 @@ export function apply(ctx, config = {}) {
     const names = [...new Set([...restrictable, ...view.visible.keys()])].sort()
     const byName = new Map(names.map((name) => [name, sizes.get(name) ?? 0]))
     const total = names.reduce((sum, name) => sum + byName.get(name), 0)
-    const { buckets, others } = buildBuckets(groups, names, byName)
+    const built = buildBuckets(groups, names, byName)
 
+    // Only groups that actually have tools in THIS profile are listed: a phone
+    // that never installed SolidWorks must not show a SolidWorks switch.
+    const live = []
+    const hidden = []
+    for (let index = 0; index < built.buckets.length; index += 1) {
+      const bucket = built.buckets[index]
+      if (bucket.tools.length === 0) {
+        hidden.push({ id: bucket.id, name: bucket.name })
+        continue
+      }
+      live.push({ group: groups[index], bucket })
+    }
+
+    // Tools no group claims are grouped by their family prefix, so a plugin the
+    // table has never heard of still gets its own switch instead of vanishing
+    // into "other". A family already covered by a live group is not repeated.
+    const claimedFamilies = new Set()
+    for (const { group } of live) {
+      for (const prefix of group.prefixes ?? []) claimedFamilies.add(prefix.replace(/_+$/, ''))
+    }
+    const autoFamilies = new Map()
+    const leftover = []
+    for (const item of built.others) {
+      const family = familyOf(item.name)
+      if (family === undefined || claimedFamilies.has(family)) {
+        leftover.push(item)
+        continue
+      }
+      const entry = autoFamilies.get(family) ?? { tools: [], items: [], bytes: 0 }
+      entry.tools.push(item.name)
+      entry.items.push(item)
+      entry.bytes += item.bytes
+      autoFamilies.set(family, entry)
+    }
+    for (const [family, entry] of [...autoFamilies].sort((a, b) => b[1].bytes - a[1].bytes)) {
+      // One lone `create_goal` is not a plugin: a family needs at least two
+      // tools before it earns its own switch. The rest stay under "其他".
+      if (entry.tools.length < 2) {
+        leftover.push(...entry.items)
+        continue
+      }
+      const title = familyTitle(family)
+      const description = `自动识别：本机 ${family}_ 开头的工具（${entry.tools.length} 个）。`
+      live.push({
+        group: {
+          id: family,
+          name: title,
+          description,
+          switchable: true,
+          risky: false,
+          defaultOn: true,
+          countsContext: true,
+          auto: true,
+        },
+        bucket: {
+          id: family,
+          name: title,
+          description,
+          switchable: true,
+          risky: false,
+          defaultOn: true,
+          countsContext: true,
+          tools: entry.tools,
+          bytes: entry.bytes,
+          auto: true,
+        },
+      })
+    }
+
+    const buckets = []
     let savedBytes = 0
     const deny = []
-    for (let index = 0; index < buckets.length; index += 1) {
-      const bucket = buckets[index]
-      const group = groups[index]
+    for (const { group, bucket } of live) {
       const { on, locked } = effectiveOn(bucket, group, overrides, locks)
       bucket.on = on
       bucket.locked = locked
+      bucket.auto = group.auto === true
+      buckets.push(bucket)
       if (on || !bucket.switchable) continue
       for (const name of bucket.tools) {
         if (GATE_TOOL_NAMES.has(name) || !restrictable.has(name)) continue
@@ -522,12 +622,13 @@ export function apply(ctx, config = {}) {
         savedBytes += byName.get(name) ?? 0
       }
     }
-    const otherBytes = others.reduce((sum, item) => sum + item.bytes, 0)
+    const otherBytes = leftover.reduce((sum, item) => sum + item.bytes, 0)
     return {
       sessionId,
-      groups,
+      groups: live.map((entry) => entry.group),
       buckets,
-      others,
+      hiddenGroups: hidden,
+      others: leftover,
       overrides,
       locks,
       deny,
@@ -554,12 +655,16 @@ export function apply(ctx, config = {}) {
       locked: bucket.locked,
       lock: plan.locks?.[bucket.id] === 'on' || plan.locks?.[bucket.id] === 'off' ? plan.locks[bucket.id] : null,
       switchable: bucket.switchable,
+      auto: bucket.auto === true,
       countsContext: bucket.countsContext,
       risky: bucket.risky,
       toolCount: bucket.tools.length,
       bytes: bucket.bytes,
       tokens: Math.round(bucket.bytes / 4),
     })),
+    // Groups whose tools this profile does not have at all. They are not listed
+    // and cannot be switched: the panel only ever shows what is installed here.
+    hiddenGroups: plan.hiddenGroups?.length ?? 0,
     other: {
       toolCount: plan.others.length,
       bytes: plan.otherBytes,
@@ -599,6 +704,9 @@ export function apply(ctx, config = {}) {
       if (!bucket.switchable) on = true
       else if (lock === 'on') on = true
       else if (lock === 'off') on = false
+      // Auto-discovered groups are never part of a recipe: a recipe knows nothing
+      // about a plugin it was never written for, so leave them as they are.
+      else if (bucket.auto === true) on = bucket.on
       else on = wanted.has(bucket.id)
       if (!on) {
         for (const name of bucket.tools) {
@@ -611,7 +719,7 @@ export function apply(ctx, config = {}) {
     const visibleBytes = Math.max(0, totalBytes - savedBytes)
     const switchGroups = {}
     for (const bucket of plan.buckets) {
-      if (bucket.switchable) switchGroups[bucket.id] = wanted.has(bucket.id)
+      if (bucket.switchable && bucket.auto !== true) switchGroups[bucket.id] = wanted.has(bucket.id)
     }
     return {
       ok: true,
@@ -666,6 +774,8 @@ export function apply(ctx, config = {}) {
       if (recipe === undefined) return { ok: false, error: `unknown recipe "${request.recipe}"` }
       for (const bucket of plan.buckets) {
         if (!bucket.switchable) continue
+        // A recipe only names groups it knows; auto-discovered ones stay as they are.
+        if (bucket.auto === true && recipe.groups !== null) continue
         requested[bucket.id] = recipe.groups === null ? true : RECIPE_SETS.get(recipe.id).has(bucket.id)
       }
       recipeLabel = recipe.name
@@ -737,15 +847,25 @@ export function apply(ctx, config = {}) {
 
   // The only writer of locks.json: the human's panel. A lock covers exactly the
   // session it was set in, never another conversation.
-  const setLock = async (sessionId, groupId, state) => {
+  const setLock = async (agent, sessionId, groupId, state) => {
     if (typeof sessionId !== 'string' || sessionId === '') {
       return { ok: false, error: 'missing session: a lock only applies to one session' }
     }
-    const groups = await loadGroups()
-    if (!groups.some((group) => group.id === groupId)) return { ok: false, error: `unknown group "${groupId}"` }
     if (state !== 'on' && state !== 'off' && state !== null) {
       return { ok: false, error: 'state must be "on", "off" or null' }
     }
+    // A group id must be one this session can actually see: the static table, or
+    // a family discovered from this profile's own tools.
+    const groups = await loadGroups()
+    let known = groups.some((group) => group.id === groupId)
+    if (!known && agent !== undefined) {
+      try {
+        known = (await planFor(agent)).buckets.some((bucket) => bucket.id === groupId)
+      } catch {
+        known = false
+      }
+    }
+    if (!known) return { ok: false, error: `unknown group "${groupId}"` }
     const body = await readJson(locksFile, { sessions: {} }, log)
     const all = body?.sessions !== null && typeof body?.sessions === 'object' ? { ...body.sessions } : {}
     const current =
@@ -901,7 +1021,7 @@ export function apply(ctx, config = {}) {
       if (method === 'lock') {
         const sessionId = typeof body.session === 'string' ? body.session : ''
         const result = await serialize(() =>
-          setLock(sessionId, body.group, body.state === undefined ? null : body.state),
+          setLock(agent, sessionId, body.group, body.state === undefined ? null : body.state),
         )
         if (result.ok !== false && agent !== undefined) {
           result.state = describe(await refresh(agent))

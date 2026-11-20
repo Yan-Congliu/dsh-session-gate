@@ -182,7 +182,13 @@ console.log('sessions:', JSON.stringify(sessions.body.sessions))
 const byName = await call('GET', '/session-gate/api/state?session=session-a')
 assert(byName.body.ok === true && byName.body.sessionId === 'session-a', 'state?session= works')
 assert(byName.body.version === own.version && byName.body.bundleVersion === undefined, 'state carries version')
-assert(byName.body.groups.length >= 8, 'state lists groups')
+assert(byName.body.groups.length >= 4, 'state lists groups')
+assert(
+  byName.body.groups.every((group) => group.toolCount > 0),
+  'only groups that actually have tools in this profile are listed',
+)
+assert(byName.body.hiddenGroups > 0, 'groups this profile does not have are counted as hidden')
+console.log('state: groups', byName.body.groups.length, 'hidden', byName.body.hiddenGroups, 'visible', byName.body.visibleBytes)
 const byAlias = await call('GET', '/session-gate/api/state?sessionId=session-a')
 assert(byAlias.body.ok === true && byAlias.body.sessionId === 'session-a', 'state?sessionId= is accepted as an alias')
 assert(byAlias.body.requestedSession === 'session-a', 'the alias is echoed as requestedSession')

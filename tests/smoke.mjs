@@ -36,6 +36,10 @@ const catalog = [
   ['todo_write', 350],
   ['gate_status', 200],
   ['gate_switch', 260],
+  // A tool family the shipped table has never heard of: AutoCAD tools arrive
+  // through another plugin, so the gate must discover them on its own.
+  ['acad_command', 700],
+  ['acad_read', 500],
 ]
 
 const defined = new Map()
@@ -231,6 +235,20 @@ assert(addonIds.includes('ego') && addonIds.includes('channels'), 'plan: browser
 assert(researchPlan.savedBytes > 0 && researchPlan.savedBytes < totalVisible, 'plan: savings inside range')
 assert(tools.view(agent).visible.has('read') && !tools.view(agent).visible.has('web_search'), 'plan: applies nothing')
 console.log('plan:', chatPlan.recipe.id, '/', researchPlan.recipe.id, '| saved', researchPlan.savedBytes, 'B')
+
+/* dynamic discovery: only groups this profile really has are listed, and a tool
+   family the table never heard of still gets its own switch */
+const dyn = await status.execute({}, { agent })
+assert(dyn.groups.every((item) => item.toolCount > 0), 'only installed groups are listed')
+assert(dyn.hiddenGroups > 0, 'groups this profile does not have are hidden')
+const acad = dyn.groups.find((item) => item.id === 'acad')
+assert(acad !== undefined && acad.auto === true, 'an unknown tool family becomes an auto group')
+assert(acad.toolCount === 2 && acad.bytes > 1000, 'the auto group holds both of its tools')
+const dynPlan = await gatePlan.execute({ task: '只聊聊天' }, { agent })
+assert(dynPlan.switch.groups.acad === undefined, 'a recipe does not touch auto groups')
+await gateSwitch.execute({ recipe: 'chat' }, { agent })
+assert(tools.view(agent).visible.has('acad_command'), 'a recipe leaves auto groups alone')
+console.log('discovery: groups', dyn.groups.length, '| hidden', dyn.hiddenGroups, '| auto acad', acad.bytes, 'B')
 
 /* all on: restrictions are lifted */
 await writeFile(join(stateDir, 'locks.json'), JSON.stringify({ sessions: {} }), 'utf8')

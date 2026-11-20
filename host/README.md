@@ -59,6 +59,10 @@ node install.mjs --apply    # 真正写入
 - 配方一排：只聊天 / 写文档 / 查资料 / 改代码 / 跑课设 / 全部打开 —— 点一下按配方批量开关。
 - 每组一行：组名 + 一句话功能 + 字节/token + 🔓锁 + 开关。占 0 token 的组自动置底、开关置灰；
   如果这组工具在本会话里根本没加载（比如 `local` 预设不带），会写「本会话没装」，那不是省下来的。
+- **只列本机真的装了的组**（0.3.7 起）：没有对应工具的组直接不出现，面板标题旁写「另有 N 组本机没装，已隐藏」。
+  手机、或没装某个插件的机器，不会看到 SolidWorks / 办公文档 / 外部渠道这类空选项。
+- **自动识别**（0.3.7 起）：组表没写到的工具，按名字前缀（`acad_command` → `acad`）自动成组，行尾带「自动」徽章；
+  同一个前缀至少 2 个工具才算一组，孤零零的单个工具留在「其他」里。配方不会替你关掉「自动」组。
 - 底部提示：开关只影响本会话；改工具集会作废本会话 prompt 缓存。
 
 ![会话闸门面板](../docs/panel-2026-11-10.png)
@@ -93,6 +97,8 @@ node install.mjs --apply    # 真正写入
 
 - `groups.json` —— 纯数据组表：`id`、`name`、`description`、`names`、`prefixes`、`switchable`、
   `risky`、`defaultOn`、`countsContext`。首次启动自动生成，之后随便改，即时生效。
+  0.3.7 起它只是**覆盖表**：一组有没有内容，看的是本机此刻注册了哪些工具；表里有、机器上没有的组
+  不显示也不可切。表里没写到的工具按前缀自动成组（≥2 个才算一组）。
 - `locks.json` —— 人工锁，按会话：`{"sessions": {"session-xxx": {"groups": {"ego": "off", "web": "on"}}}}`。
   旧版的全局 `{"groups": {...}}` 会在启动时改名成 `locks.legacy-<时间戳>.json` 留档，不再作用于任何会话。
 - `sessions.json` —— 插件自动维护，别手改。
@@ -155,6 +161,8 @@ tool-result-pruner）。不挂联网、办公、SolidWorks、子代理、技能�
 
 ## 版本历史
 
+- 0.3.7 动态分组：只列本机实际装了的组（`gate_status` 新增 `hiddenGroups`，面板标「另有 N 组本机没装」）；
+  组表没写到的工具按前缀自动成组（≥2 个才算一组，标「自动」，配方不碰它）；`setLock` 允许锁自动组。
 - 0.3.6 手工安装器 `install.mjs` + README 手工步骤；`/state` 支持 `sessionId` 别名与单活会话只读兜底；
   `/sessions` 与 `state` 带 `version`；`gate_status` 带 `stateDir` / `bundleVersion`；
   面板无会话时列候选；client 拿不到槽位打 `console.warn`；新增 `tests/api.mjs`。

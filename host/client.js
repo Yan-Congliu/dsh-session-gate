@@ -102,6 +102,7 @@ window.__ModuleLoader__.load({
             { className: 'dsg-line' },
             h('span', { className: 'dsg-name' }, group.name),
             group.risky ? h('span', { className: 'dsg-badge' }, '谨慎') : null,
+            group.auto ? h('span', { className: 'dsg-badge', title: '从本机实际工具自动识别出来的组' }, '自动') : null,
             h(
               'span',
               { className: 'dsg-tokens' },
@@ -395,7 +396,14 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'dsg-section' },
           '工具组',
-          h('span', { className: 'dsg-hint' }, ordered.length ? `${ordered.length} 组` : ''),
+          h(
+            'span',
+            { className: 'dsg-hint' },
+            ordered.length ? `${ordered.length} 组` : '',
+            state?.hiddenGroups > 0
+              ? ` · 另有 ${state.hiddenGroups} 组本机没装，已隐藏`
+              : '',
+          ),
         ),
         ordered.length === 0
           ? h('div', { className: 'dsg-empty' }, error ? '' : '还没有读到工具组')
@@ -434,7 +442,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dsg-hint' },
-          '🔒 是你设的“始终开/始终关”，AI 改不动。开关只影响本会话，别的会话不受影响；“本会话没装”表示这个会话里压根没加载那组工具，不算省下来的。改工具集会让本会话的 prompt 缓存作废，建议在阶段边界切。',
+          '🔒 是你设的“始终开/始终关”，AI 改不动。开关只影响本会话，别的会话不受影响；“本会话没装”表示这个会话里压根没加载那组工具，不算省下来的。面板只列本机真的装了的组，没装的不会出现。改工具集会让本会话的 prompt 缓存作废，建议在阶段边界切。',
         ),
       )
     }
